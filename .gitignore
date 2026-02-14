@@ -1,0 +1,22 @@
+# Vídeos
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.flv
+*.wmv
+
+# Áudios temporários
+*.wav
+*.mp3
+
+# Pastas de mídia/saída
+output/
+videos/
+
+# Python / Ambiente
+__pycache__/
+*.pyc
+venv/
+.env
