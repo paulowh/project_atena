@@ -36,7 +36,7 @@ def generate_clip_json(transcript_text, ollama_url, model_name):
     Envia um trecho de transcrição para a LLM e retorna JSON de cortes.
     """
     system_prompt = (
-        "Aja como um editor de Shorts/Reels. Analise a transcrição e extraia os momentos mais impactantes. "
+        "Aja como um editor de Shorts/Reels. Analise a transcrição e extraia os momentos mais impactantes. Cada momento deve ter mais que 30 segundos e menos que 120 segundos. "
         "Siga o formato JSON estritamente: [{\"title\": \"...\", \"start\": 0.0, \"end\": 0.0, \"reason\": \"...\"}]"
     )
 
@@ -63,68 +63,3 @@ def generate_clip_json(transcript_text, ollama_url, model_name):
     except Exception as e:
         print(f"Erro na requisição: {e}")
         return []
-
-def process_transcript_to_llm(file_path, ollama_url, model_name):
-    """
-    Lê o arquivo TXT de 4h, divide em blocos e manda para a LLM.
-    """
-    if not os.path.exists(file_path):
-        print(f"Arquivo não encontrado: {file_path}")
-        return
-
-    # Lendo todas as linhas do arquivo gerado pelo Whisper
-    with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    all_clips = []
-    # Definindo tamanho do bloco (aprox. 250 linhas = ~15-20 min de vídeo)
-    chunk_size = 250 
-
-    print(f"Total de linhas: {len(lines)}. Processando em blocos de {chunk_size}...")
-
-    for i in range(0, len(lines), chunk_size):
-        chunk_text = "".join(lines[i:i + chunk_size])
-        print(f">> Enviando bloco {(i//chunk_size)+1} para a LLM...")
-
-        system_prompt = (
-            "Aja como um editor de Shorts/Reels. Analise a transcrição e extraia os momentos mais impactantes. "
-            "Siga o formato JSON estritamente: [{\"title\": \"...\", \"start\": 0.0, \"end\": 0.0, \"reason\": \"...\"}]"
-        )
-
-        payload = {
-            "model": model_name,
-            "prompt": f"TRANSCRICAO:\n{chunk_text}\n\nRetorne os cortes em JSON:",
-            "system": system_prompt,
-            "stream": False,
-            "format": "json", # Força o Ollama a usar modo JSON
-            "options": {
-                "temperature": 0.3,
-                "num_ctx": 8192 # Janela de contexto maior para não cortar o texto
-            }
-        }
-
-        try:
-            response = requests.post(ollama_url, json=payload, timeout=120)
-            if response.status_code == 200:
-                raw_response = response.json().get("response", "")
-                clips = extract_json_from_response(raw_response)
-                
-                # Validação rápida de integridade dos dados
-                for clip in clips:
-                    if "start" in clip and "end" in clip:
-                        all_clips.append(clip)
-            else:
-                print(f"Erro no Ollama: {response.status_code}")
-        except Exception as e:
-            print(f"Erro na requisição: {e}")
-
-    # Salvando o resultado final
-    with open("sugestoes_cortes.json", "w", encoding="utf-8") as f:
-        json.dump(all_clips, f, indent=4, ensure_ascii=False)
-    
-    print(f"\n--- FIM! {len(all_clips)} clips sugeridos salvos em 'sugestoes_cortes.json' ---")
-
-# Para rodar apenas este módulo:
-if __name__ == "__main__":
-    # Altere para o caminho do seu arquivo .txt real
-    process_transcript_to_llm("output/transcript.txt", "http://localhost:11434/api/generate", "llama3")

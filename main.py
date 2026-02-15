@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-from scripts.transcribe import transcribe
+import subprocess
 from scripts.ollama_select_clips import generate_clip_json
 from scripts.cut_clips import cut_multiple_clips
 
@@ -10,47 +10,62 @@ OLLAMA_MODEL = "qwen2.5:7b"
 
 def main(video_path: str):
     if not os.path.exists(video_path):
-        print(f"❌ Erro: O arquivo de vídeo '{video_path}' não foi encontrado.")
+        print(f"❌ Erro: Arquivo '{video_path}' não encontrado.")
         return
 
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
     os.makedirs("output", exist_ok=True)
     os.makedirs("output/clips", exist_ok=True)
 
-    transcript_path = "output/transcript.txt"
-    clips_json_path = "output/clips.json"
+    transcript_path = os.path.join("output", f"{base_name}-transcript.txt")
+    clips_json_path = os.path.join("output", f"{base_name}-clips.json")
+    clips_output_folder = os.path.join("output", "clips", base_name)
 
-    # --- MENU ---
-    print("\n📌 MENU DE OPÇÕES")
-    print("1 - Gerar transcrição completa e sugerir cortes (Processo Completo)")
-    print("2 - Usar transcrição existente para sugerir novos cortes (LLM)")
-    print("3 - Apenas cortar o vídeo usando o clips.json existente")
-    choice = input("Escolha uma opção (1, 2 ou 3): ").strip()
-
-    # --- LÓGICA DE EXECUÇÃO ---
+    print("\n" + "="*50)
+    print(f"ATENA VIDEO PROCESSOR - {base_name.upper()}")
+    print("="*50)
+    print("0 - PROCESSO COMPLETO (Transcrição -> IA -> Cortes)")
+    print("-" * 50)
+    print("1 - Apenas Transcrever Vídeo")
+    print("2 - Apenas Gerar Sugestões (JSON) via IA")
+    print("3 - Apenas Cortar Vídeo (Baseado no JSON)")
+    print("="*50)
     
-    # Caso 3: Pula direto para o corte
-    if choice == "3":
-        if not os.path.exists(clips_json_path):
-            print("❌ Erro: clips.json não encontrado em 'output/'.")
+    choice = input("Escolha o que deseja fazer: ").strip()
+
+    # --- 1. ETAPA DE TRANSCRIÇÃO ---
+    if choice in ["0", "1"]:
+        print("\n[1/3] INICIANDO TRANSCRIÇÃO...")
+        
+        # Executa transcrição em processo separado para evitar crash CUDA
+        # O wrapper transcribe_wrapper.py cuida de chamar a função de transcrição e sair sem retornar
+        wrapper_path = os.path.join("scripts", "transcribe_wrapper.py")
+        try:
+            result = subprocess.run(
+                [sys.executable, wrapper_path, video_path, transcript_path, "small"],
+                check=True,
+                capture_output=False
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ Erro na transcrição (código {e.returncode})")
             return
-        with open(clips_json_path, "r", encoding="utf-8") as f:
-            all_clips = json.load(f)
-        print("✅ Usando dados do clips.json existente.")
+        except Exception as e:
+            print(f"\n❌ Erro ao executar transcrição: {e}")
+            return
+        
+        print(f"✅ Transcrição salva em: {os.path.basename(transcript_path)}")
+        
+        if choice == "1": 
+            print("\n✅ Processo concluído.")
+            return
 
-    # Caso 1 e 2: Precisam processar a LLM
-    elif choice in ["1", "2"]:
-        if choice == "1":
-            print("[1/4] Transcrevendo vídeo (isso pode demorar)...")
-            transcribe(video_path, transcript_path, model_size="small")
-            print("✅ Transcrição finalizada!")
-        else:
-            if not os.path.exists(transcript_path):
-                print("❌ Erro: transcript.txt não encontrado. Use a opção 1 primeiro.")
-                return
-            print("[1/4] Usando transcrição existente...")
+    # --- 2. ETAPA DE IA (OLLAMA) ---
+    if choice in ["0", "2"]:
+        if not os.path.exists(transcript_path):
+            print(f"\n❌ Erro: Transcrição não encontrada")
+            return
 
-        # Processamento com Ollama (Compartilhado entre opção 1 e 2)
-        print("[2/4] Lendo transcrição...")
+        print("\n[2/3] ANALISANDO TRANSCRIÇÃO COM IA...")
         with open(transcript_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
@@ -58,41 +73,64 @@ def main(video_path: str):
         chunk_size = 250 
         total_chunks = (len(lines) // chunk_size) + 1
         
-        print(f"[3/4] Enviando para Ollama ({OLLAMA_MODEL}) em {total_chunks} blocos...")
+        print(f"🤖 Modelo: {OLLAMA_MODEL}")
         for i in range(0, len(lines), chunk_size):
             chunk_text = "".join(lines[i:i + chunk_size])
             current_chunk = (i // chunk_size) + 1
-            print(f"   -> Analisando bloco {current_chunk}/{total_chunks}...")
+            
+            # Barra de progresso similar ao transcribe
+            percent = (current_chunk / total_chunks) * 100
+            bar_size = 20
+            filled = int(bar_size * current_chunk / total_chunks)
+            bar = "█" * filled + "░" * (bar_size - filled)
+            
+            print(f"   {bar} {percent:5.1f}% | Analisando bloco {current_chunk}/{total_chunks}", end="\r", flush=True)
             
             try:
                 clips = generate_clip_json(chunk_text, OLLAMA_URL, OLLAMA_MODEL)
                 if clips:
                     all_clips.extend(clips)
             except Exception as e:
-                print(f"   ⚠️ Erro no bloco {current_chunk}: {e}")
+                print(f"\n   ⚠️ Erro no bloco {current_chunk}: {e}")
 
+        print(f"\n   {'█' * 20} 100.0% | Análise concluída!{' ' * 30}")
+        
         if not all_clips:
-            print("❌ A LLM não gerou nenhum clipe válido.")
+            print("\n❌ A IA não gerou cortes. Verifique se o Ollama está rodando.")
             return
 
-        # Salva o JSON gerado
-        print("[+] Salvando novas sugestões em clips.json...")
+        # Salva o JSON
         with open(clips_json_path, "w", encoding="utf-8") as f:
             json.dump(all_clips, f, indent=2, ensure_ascii=False)
-    
-    else:
-        print("❌ Opção inválida!")
-        return
+        print(f"✅ {len(all_clips)} cortes salvos em: {os.path.basename(clips_json_path)}")
+        
+        if choice == "2": 
+            print("\n✅ Processo concluído.")
+            return
 
-    # --- ETAPA FINAL: CORTE (Executada por todas as opções válidas) ---
-    print(f"\n[4/4] Iniciando corte de {len(all_clips)} clips...")
-    try:
-        cut_multiple_clips(video_path, all_clips, "output/clips")
-        print("\n✨ PROCESSO CONCLUÍDO COM SUCESSO!")
-    except Exception as e:
-        print(f"❌ Erro crítico ao cortar vídeo: {e}")
+    # --- 3. ETAPA DE CORTE (FFMPEG) ---
+    if choice in ["0", "3"]:
+        if not os.path.exists(clips_json_path):
+            print(f"\n❌ Erro: JSON de cortes não encontrado.")
+            return
+        
+        with open(clips_json_path, "r", encoding="utf-8") as f:
+            clips_to_cut = json.load(f)
 
-    print(f"📂 Pasta de saída: {os.path.abspath('output/clips')}")
+        print(f"\n[3/3] GERANDO REELS...")
+        
+        # Verifica se há transcrição disponível para legendas
+        if os.path.exists(transcript_path):
+            print(f"✅ Transcrição encontrada - Legendas serão incluídas")
+        else:
+            print(f"⚠️  Transcrição não encontrada - Gerando sem legendas")
+            
+        try:
+            cut_multiple_clips(video_path, clips_to_cut, clips_output_folder, transcript_path)
+        except Exception as e:
+            print(f"\n❌ Erro no FFmpeg: {e}")
+
+    print(f"\n📂 Arquivos em: {os.path.abspath(clips_output_folder)}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
