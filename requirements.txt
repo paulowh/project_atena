@@ -1,0 +1,11 @@
+# Dependências do Projeto Atena
+# Video processing and AI clip generation
+
+# Transcrição de áudio/vídeo
+faster-whisper>=1.0.0
+
+# Requests HTTP para Ollama API
+requests>=2.31.0
+
+# Barra de progresso para terminal
+tqdm>=4.66.0
