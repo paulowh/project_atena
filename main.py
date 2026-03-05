@@ -4,6 +4,8 @@ import json
 import subprocess
 from scripts.ollama_select_clips import generate_clip_json
 from scripts.cut_clips import cut_multiple_clips
+from scripts.emotion_analyzer import get_emotional_segments
+from scripts.vision_analyzer import analyze_frame_with_llava
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b" 
@@ -29,6 +31,7 @@ def main(video_path: str):
     print("1 - Apenas Transcrever Vídeo")
     print("2 - Apenas Gerar Sugestões (JSON) via IA")
     print("3 - Apenas Cortar Vídeo (Baseado no JSON)")
+    print("4 - [NOVO] IA MULTIMODAL (Análise de Emoção + Visão)")
     print("="*50)
     
     choice = input("Escolha o que deseja fazer: ").strip()
@@ -130,6 +133,31 @@ def main(video_path: str):
         except Exception as e:
             print(f"\n❌ Erro no FFmpeg: {e}")
 
+    if choice == "4":
+        # PASSO 1: Achar picos de áudio
+        peaks = get_emotional_segments(video_path)
+        print(f"✨ Encontrados {len(peaks)} momentos candidatos.")
+        
+        all_clips = []
+        for i, timestamp in enumerate(peaks):
+            print(f"📸 Analisando visualmente o momento {i+1}/{len(peaks)}...")
+            
+            # PASSO 2: IA "Vê" o frame
+            desc = analyze_frame_with_llava(video_path, timestamp, 
+                "Descreva o que acontece nesta cena de jogo. É um momento de ação, vitória ou algo engraçado?")
+            
+            # Aqui você pode salvar no formato JSON que seu cut_clips já entende
+            all_clips.append({
+                "title": f"Destaque {i+1}",
+                "start": max(0, timestamp - 15), # 15s antes do pico
+                "end": timestamp + 20,           # 20s depois do pico
+                "reason": desc
+            })
+            
+        # Agora só chamar sua função de corte que já está pronta!
+        cut_multiple_clips(video_path, all_clips, clips_output_folder)
+
+        
     print(f"\n📂 Arquivos em: {os.path.abspath(clips_output_folder)}")
 
 if __name__ == "__main__":

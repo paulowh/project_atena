@@ -252,8 +252,8 @@ def cut_multiple_clips(video_path, raw_clips_data, output_folder, transcript_pat
                 "-map", "0:a",
                 # "-c:v", "libx264", # Troque para libx264 se quiser usar a CPU
                 "-c:v", "h264_nvenc", # Troque para h264_nvenc se quiser usar a GPU
-                "-preset", "veryfast",
-                "-crf", "23",
+                "-preset", "p4",  # p4 = balanced preset for nvenc (p1=fastest, p7=slowest)
+                "-cq", "23",  # Use -cq (constant quality) instead of -crf for nvenc
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-progress", "pipe:1",
